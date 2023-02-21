@@ -25,6 +25,7 @@
 
 #include "lunch_scanner_peripheral.h"
 #include "lunch_parser.h"
+#include "cfg_adv_params.h"
 #include "khash.h"
 
 #define S_TBL_IDX 0
@@ -61,8 +62,7 @@ KHASH_MAP_INIT_INT(rssi, lunch_rssi_state_t)
 static khash_t(rssi) *rssi_map;
 
 
-#define ADV_LUNCH_DATA_IDX 2
-#define PAYLOAD_RSSI_CNT 2
+#define ADV_LUNCH_DATA_IDX 3
 
 static int student_id_to_int(nvds_lunch_data_t data)
 {
@@ -296,7 +296,7 @@ static void bsa_set_adv_data(void)
 
     // Find the n best rssi values
     // Go through array n times, each time finding the highest rssi that is less than the rssi max before it
-    int best_rssi[PAYLOAD_RSSI_CNT] = {0, 0};
+    int best_rssi[PAYLOAD_RSSI_CNT] = {0};
 
     for(int i = 0; i < PAYLOAD_RSSI_CNT; i++) {
         int max = -1;
@@ -326,7 +326,7 @@ static void bsa_set_adv_data(void)
 
         best_rssi[i] = max;
     }
-    
+
     lunch_peripheral_data_t lunch_data[PAYLOAD_RSSI_CNT];
     for(int i = 0; i < PAYLOAD_RSSI_CNT; i++) {
         lunch_rssi_state_t *rssi_state = &kh_value(rssi_map, best_rssi[i]);

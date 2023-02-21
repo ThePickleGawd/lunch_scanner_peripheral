@@ -18,8 +18,10 @@
 #define CFG_ADV0_CREATE_INTERVAL_MIN ((uint32_t)ADV0_INTERVAL*1000/625)
 #define CFG_ADV0_CREATE_INTERVAL_MAX ((uint32_t)ADV0_INTERVAL*1000/625)
 
+#define PAYLOAD_RSSI_CNT 2
+
 #define CFG_ADV0_DATA_ADV_PAYLOAD \
-   0x17, 0xFF, \
+   0x18, 0xFF, PAYLOAD_RSSI_CNT, \
    -80, '0', '0', '0', '0', '0', '0', '0', '0', '0', 0, \
    -80, '0', '0', '0', '0', '0', '0', '0', '0', '0', 0, \
     
