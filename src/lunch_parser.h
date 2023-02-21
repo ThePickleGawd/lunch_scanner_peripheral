@@ -20,11 +20,6 @@ typedef struct {
     uint8_t student_id[STUDENT_ID_LEN];
 } __PACKED nvds_lunch_data_t;
 
-typedef struct {
-    uint8_t rssi_val[SCHOOL_ID_LEN];
-    uint8_t student_id[STUDENT_ID_LEN];
-} __PACKED lunch_peripheral_data_t;
-
 /**
  * @brief Try to parse lunch data from advertisement data
  * @returns true on success, false otherwise

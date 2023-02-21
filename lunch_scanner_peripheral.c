@@ -29,6 +29,10 @@
 
 #define S_TBL_IDX 0
 
+#ifndef STUDENT_ID_LEN
+#define STUDENT_ID_LEN 10
+#endif
+
 ATM_LOG_LOCAL_SETTING("BLE_scan_adv", V);
 
 static uint8_t scan_act_idx;
@@ -42,16 +46,23 @@ static bool should_send = false;
 
 typedef struct {
     int totalRSSI;
-    uint8_t beacon_cnt;
+    int8_t beacon_cnt;
     uint8_t student_id[STUDENT_ID_LEN];
 } __PACKED lunch_rssi_state_t;
+
+typedef struct {
+    int8_t rssi_val;
+    uint8_t student_id[STUDENT_ID_LEN];
+} __PACKED lunch_peripheral_data_t;
+
 
 KHASH_MAP_INIT_INT(rssi, lunch_rssi_state_t)
 
 static khash_t(rssi) *rssi_map;
 
 
-#define ADV_LUNCH_DATA_IDX 8
+#define ADV_LUNCH_DATA_IDX 2
+#define PAYLOAD_RSSI_CNT 2
 
 static int student_id_to_int(nvds_lunch_data_t data)
 {
@@ -90,18 +101,22 @@ static void bsa_ext_adv_ind(ble_gap_ind_ext_adv_report_t const *ind)
             // Place new rssi value in map
             lunch_rssi_state_t rssi_state = {
                 .beacon_cnt = 1,
-                .totalRSSI = ind->rssi,
+                .totalRSSI = (int)ind->rssi,
                 .student_id = {'0', '0', '0', '0', '0', '0', '0', '0', '0', 0}
             };
             memcpy(&rssi_state.student_id, &lunch_data.student_id, STUDENT_ID_LEN);
             kh_value(rssi_map, iter) = rssi_state;
             ATM_LOG(D, "getting %s", lunch_data.student_id);
             ATM_LOG(D, "set to %s", rssi_state.student_id);
+            ATM_LOG(D, "Increment %d", kh_value(rssi_map, iter).totalRSSI);
         } else {
             lunch_rssi_state_t *rssi_state = &kh_value(rssi_map, k);
             rssi_state->beacon_cnt++;
-            rssi_state->totalRSSI += ind->rssi;
+            rssi_state->totalRSSI += (int)ind->rssi;
+            ATM_LOG(D, "Increment %d", kh_value(rssi_map, k).totalRSSI);
         }
+
+        ATM_LOG(D, "RSSI is %d", ind->rssi);
 
     }
 
@@ -279,27 +294,53 @@ static void bsa_set_adv_data(void)
         return;
     };
 
-    int best_rssi_k = kh_begin(rssi_map);
+    // Find the n best rssi values
+    // Go through array n times, each time finding the highest rssi that is less than the rssi max before it
+    int best_rssi[PAYLOAD_RSSI_CNT] = {0, 0};
 
-    for (int k = kh_begin(rssi_map); k != kh_end(rssi_map); ++k) {
-        if (kh_exist(rssi_map, k)) {
-            lunch_rssi_state_t *rssi_state = &kh_value(rssi_map, k);
-            lunch_rssi_state_t *best_rssi = &kh_value(rssi_map, best_rssi_k);
-            if(rssi_state->totalRSSI / rssi_state->beacon_cnt >
-                best_rssi->totalRSSI / best_rssi->beacon_cnt) {
-                    best_rssi_k = k;
+    for(int i = 0; i < PAYLOAD_RSSI_CNT; i++) {
+        int max = -1;
+        for (int k = kh_begin(rssi_map); k != kh_end(rssi_map); ++k) {
+            if (kh_exist(rssi_map, k)) {
+                // Prevent invalid key
+                if(max == -1) {
+                    max = k;
+                    continue;
                 }
+
+                lunch_rssi_state_t *cur_rssi_state = &kh_value(rssi_map, k);
+                lunch_rssi_state_t *curMax_rssi_state = &kh_value(rssi_map, max);
+                lunch_rssi_state_t *prevMax_rssi_state = &kh_value(rssi_map, best_rssi[i-1 >= 0 ? i-1 : 0]);
+
+                ATM_LOG(D, "Traversing: %ddbm k=%d", cur_rssi_state->totalRSSI, k);
+
+                int currentRSSI = cur_rssi_state->totalRSSI / cur_rssi_state->beacon_cnt;
+                int curMaxRSSI = curMax_rssi_state->totalRSSI / curMax_rssi_state->beacon_cnt;
+                int prevMaxRSSI = prevMax_rssi_state->totalRSSI / prevMax_rssi_state->beacon_cnt;
+
+                if(currentRSSI > curMaxRSSI && currentRSSI < prevMaxRSSI) {
+                    max = k;
+                }
+            }
         }
+
+        best_rssi[i] = max;
     }
 
-    lunch_peripheral_data_t lunch_data = {
-        .rssi_val = {0xFF, -(kh_value(rssi_map, best_rssi_k).totalRSSI / kh_value(rssi_map, best_rssi_k).beacon_cnt), '0', '0', '0', 0},
-        .student_id = { '0', '0', '0', '0', '0', '0', '0', '0', '0', 0 }
-    };
-    memcpy(&lunch_data.student_id, &((&kh_value(rssi_map, best_rssi_k))->student_id), STUDENT_ID_LEN);
+    lunch_rssi_state_t *first = &kh_value(rssi_map, best_rssi[0]);
+    lunch_rssi_state_t *second = &kh_value(rssi_map, best_rssi[1]);
 
-    ATM_LOG(D, "avg %d", lunch_data.rssi_val[1]);
-    ATM_LOG(D, "ID is %s", lunch_data.student_id);
+    lunch_peripheral_data_t lunch_data[PAYLOAD_RSSI_CNT];
+    for(int i = 0; i < PAYLOAD_RSSI_CNT; i++) {
+        lunch_rssi_state_t *rssi_state = &kh_value(rssi_map, best_rssi[i]);
+        lunch_peripheral_data_t student = {
+            .rssi_val = rssi_state->totalRSSI / rssi_state->beacon_cnt,
+            .student_id = {'0', '0', '0', '0', '0', '0', '0', '0', '0', 0}
+        };
+        
+        memcpy(&student.student_id, &(rssi_state->student_id), STUDENT_ID_LEN);
+        lunch_data[i] = student;
+    }
 
     // Cleanup map
     for (int k = kh_begin(rssi_map); k != kh_end(rssi_map); ++k) {
@@ -309,7 +350,7 @@ static void bsa_set_adv_data(void)
     }
 
     adv_data = atm_adv_advdata_param_get(0);
-    memcpy((adv_data->data + ADV_LUNCH_DATA_IDX), (uint8_t *) &lunch_data, sizeof(lunch_peripheral_data_t));
+    memcpy((adv_data->data + ADV_LUNCH_DATA_IDX), (uint8_t *) &lunch_data, sizeof(lunch_data));
 
     ble_err_code_t ret = atm_adv_set_adv_data(adv_act_idx, adv_data);
     if (ret != BLE_ERR_NO_ERROR) {
