@@ -326,10 +326,7 @@ static void bsa_set_adv_data(void)
 
         best_rssi[i] = max;
     }
-
-    lunch_rssi_state_t *first = &kh_value(rssi_map, best_rssi[0]);
-    lunch_rssi_state_t *second = &kh_value(rssi_map, best_rssi[1]);
-
+    
     lunch_peripheral_data_t lunch_data[PAYLOAD_RSSI_CNT];
     for(int i = 0; i < PAYLOAD_RSSI_CNT; i++) {
         lunch_rssi_state_t *rssi_state = &kh_value(rssi_map, best_rssi[i]);
