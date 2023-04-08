@@ -42,3 +42,8 @@ typedef enum {
     OP_SCAN_RESTART_SCAN,
     OP_END = 0xFF
 } lunch_peripheral_op_t;
+
+typedef enum {
+    EXTENDER,
+    CALIBRATOR
+} lunch_peripheral_mode_t;
