@@ -10,6 +10,7 @@
  ******************************************************************************
  */
 
+// Libs
 #include "arch.h"
 #include <inttypes.h>
 #include "atm_asm.h"
@@ -22,7 +23,9 @@
 #include "atm_scan.h"
 #include "atm_gap_param.h"
 #include "atm_scan_param.h"
+#include "atm_gpio.h"
 
+// My Stuff
 #include "lunch_scanner_peripheral.h"
 #include "lunch_parser.h"
 #include "cfg_adv_params.h"
@@ -30,8 +33,11 @@
 
 #define S_TBL_IDX 0
 
-#ifndef STUDENT_ID_LEN
-#define STUDENT_ID_LEN 10
+#define PERIPH_STUDENT_ID_LEN 6 // how much we want to store in the adv packet
+#define PERIPH_PREFIX_LEN 3
+
+#ifndef STUDENT_ID_ARR_LEN
+#define STUDENT_ID_ARR_LEN 10
 #endif
 
 #ifndef PERIPH_MODE_DIP
@@ -53,12 +59,12 @@ static lunch_peripheral_mode_t periph_mode;
 typedef struct {
     int totalRSSI;
     int8_t beacon_cnt;
-    uint8_t student_id[STUDENT_ID_LEN];
+    uint8_t student_id[STUDENT_ID_ARR_LEN];
 } __PACKED lunch_rssi_state_t;
 
 typedef struct {
     int8_t rssi_val;
-    uint8_t student_id[STUDENT_ID_LEN];
+    uint8_t student_id[PERIPH_STUDENT_ID_LEN];
 } __PACKED lunch_peripheral_data_t;
 
 
@@ -66,12 +72,10 @@ KHASH_MAP_INIT_INT(rssi, lunch_rssi_state_t)
 
 static khash_t(rssi) *rssi_map;
 
-#define ADV_LUNCH_DATA_IDX 3
-
 static int student_id_to_int(nvds_lunch_data_t data)
 {
     int num = 0;
-    for(int i = STUDENT_ID_LEN - 1; i >= 0; i--) {
+    for(int i = STUDENT_ID_ARR_LEN - 1; i >= 0; i--) {
         num += data.student_id[i] - '0';
         num *= 10;
     }
@@ -106,9 +110,9 @@ static void periph_ext_adv_ind(ble_gap_ind_ext_adv_report_t const *ind)
             lunch_rssi_state_t rssi_state = {
                 .beacon_cnt = 1,
                 .totalRSSI = (int)ind->rssi,
-                .student_id = {'E', 'M', 'P', 'T', 'Y', '_', 'A', 'R', 'R', 0}
+                .student_id = {'E', 'M', 'P', 'T', 'Y', 0, 0, 0, 0, 0}
             };
-            memcpy(&rssi_state.student_id, &lunch_data.student_id, STUDENT_ID_LEN);
+            memcpy(&rssi_state.student_id, &lunch_data.student_id, STUDENT_ID_ARR_LEN);
             kh_value(rssi_map, iter) = rssi_state;
         } else {
             lunch_rssi_state_t *rssi_state = &kh_value(rssi_map, k);
@@ -286,8 +290,6 @@ static void periph_create_adv(void)
  */
 static void periph_set_adv_data(void)
 {
-    static atm_adv_data_t *adv_data;
-
     if(kh_begin(rssi_map) == kh_end(rssi_map)) {
         ATM_LOG(E, "No data in map");
         return;
@@ -296,7 +298,6 @@ static void periph_set_adv_data(void)
     // Find the n best rssi values
     // Go through array n times, each time finding the highest rssi that is less than the rssi max before it
     lunch_rssi_state_t best_rssi[PAYLOAD_RSSI_CNT] = {0};
-
     for(int i = 0; i < PAYLOAD_RSSI_CNT; i++) {
         int max_k = -1;
         for (int k = kh_begin(rssi_map); k != kh_end(rssi_map); ++k) {
@@ -318,9 +319,9 @@ static void periph_set_adv_data(void)
             kh_del(rssi, rssi_map, max_k);
         } else {
             lunch_rssi_state_t empty_rssi = {
-                .totalRSSI = -80, // TODO: put known "failure" RSSI
+                .totalRSSI = 0xFF,
                 .beacon_cnt = 1,
-                .student_id = {'E', 'M', 'P', 'T', 'Y', '!', 0}
+                .student_id = {0, 0, 0, 'E', 'M', 'P', 'T', 'Y', 0, 0}
             };
 
             best_rssi[i] = empty_rssi;
@@ -333,10 +334,10 @@ static void periph_set_adv_data(void)
         lunch_rssi_state_t *rssi_state = &best_rssi[i];
         lunch_peripheral_data_t student = {
             .rssi_val = rssi_state->totalRSSI / rssi_state->beacon_cnt,
-            .student_id = {'E', 'M', 'P', 'T', 'Y', '_', 'A', 'R', 'R', 0}
+            .student_id = {'E', 'M', 'P', 'T', 'Y', 0}
         };
         
-        memcpy(&student.student_id, &(rssi_state->student_id), STUDENT_ID_LEN);
+        memcpy(&student.student_id, &(rssi_state->student_id[PERIPH_PREFIX_LEN]), PERIPH_STUDENT_ID_LEN);
         lunch_periph_arr[i] = student;
     }
 
@@ -347,10 +348,26 @@ static void periph_set_adv_data(void)
         }
     }
 
+    // Set adv data
+    static atm_adv_data_t *adv_data;
     adv_data = atm_adv_advdata_param_get(0);
-    memcpy((adv_data->data + ADV_LUNCH_DATA_IDX), (uint8_t *) &lunch_periph_arr, sizeof(lunch_periph_arr));
+    memset(adv_data->data + ADV_PERIPH_MODE_OFFSET, periph_mode, 1);
+    memcpy((adv_data->data + ADV_DATA_START_OFFSET), (uint8_t *) &lunch_periph_arr, sizeof(lunch_periph_arr));
 
-    ATM_LOG(D, "Output %s and %s", lunch_periph_arr[0].student_id, lunch_periph_arr[1].student_id);
+    ATM_LOG(D, "%x %x %x %x %x %x %x %x %x %x", 
+        adv_data->data[0],
+        adv_data->data[1],
+        adv_data->data[2],
+        adv_data->data[3],
+        adv_data->data[4],
+        adv_data->data[5],
+        adv_data->data[6],
+        adv_data->data[7],
+        adv_data->data[8],
+        adv_data->data[9]
+    );
+
+    ATM_LOG(D, "Output %s and %s (2 out of %d)", lunch_periph_arr[0].student_id, lunch_periph_arr[1].student_id, PAYLOAD_RSSI_CNT);
 
     ble_err_code_t ret = atm_adv_set_adv_data(adv_act_idx, adv_data);
     if (ret != BLE_ERR_NO_ERROR) {
@@ -440,7 +457,7 @@ static rep_vec_err_t periph_init(void)
     atm_gpio_clear_pullup(PERIPH_MODE_DIP);
     atm_gpio_clear_input(PERIPH_MODE_DIP);
 
-    ATM_LOG(D, "Initing in %s mode (doesn't do anything now: todo fix)", !periph_mode ? "extender " : "calibrator");
+    ATM_LOG(D, "Initing in %s mode", !periph_mode ? "extender " : "calibrator");
 
     // Read restart duration from NVDS
     nvds_tag_len_t restart_dur_size = sizeof(restart_time_csec);

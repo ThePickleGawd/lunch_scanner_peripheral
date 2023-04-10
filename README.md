@@ -35,3 +35,4 @@ stateDiagram
 ## TODO:
 
 - Extender and calibrator mode + testing for accuracy improvements
+- Document adv packet 
