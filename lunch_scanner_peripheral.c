@@ -53,7 +53,7 @@ static sw_timer_id_t tid_restart;
 static pm_lock_id_t scan_lock_hiber;
 static uint8_t sleep_mode;
 
-static bool should_send = false;
+static bool should_send = false; // should we send out an adv?
 static lunch_peripheral_mode_t periph_mode;
 
 typedef struct {
@@ -354,7 +354,9 @@ static void periph_set_adv_data(void)
     memset(adv_data->data + ADV_PERIPH_MODE_OFFSET, periph_mode, 1);
     memcpy((adv_data->data + ADV_DATA_START_OFFSET), (uint8_t *) &lunch_periph_arr, sizeof(lunch_periph_arr));
 
-    ATM_LOG(D, "%x %x %x %x %x %x %x %x %x %x", 
+    ATM_LOG(D, "Size: %u", sizeof(lunch_periph_arr));
+
+    ATM_LOG(D, "%x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x", 
         adv_data->data[0],
         adv_data->data[1],
         adv_data->data[2],
@@ -364,10 +366,21 @@ static void periph_set_adv_data(void)
         adv_data->data[6],
         adv_data->data[7],
         adv_data->data[8],
-        adv_data->data[9]
+        adv_data->data[9],
+        adv_data->data[10],
+        adv_data->data[11],
+        adv_data->data[12],
+        adv_data->data[13],
+        adv_data->data[14],
+        adv_data->data[15],
+        adv_data->data[16],
+        adv_data->data[17],
+        adv_data->data[18],
+        adv_data->data[19]
     );
 
-    ATM_LOG(D, "Output %s and %s (2 out of %d)", lunch_periph_arr[0].student_id, lunch_periph_arr[1].student_id, PAYLOAD_RSSI_CNT);
+    ATM_LOG(D, "Output %s and %s and %s and %s", lunch_periph_arr[0].student_id, lunch_periph_arr[1].student_id, 
+        lunch_periph_arr[2].student_id, lunch_periph_arr[3].student_id);
 
     ble_err_code_t ret = atm_adv_set_adv_data(adv_act_idx, adv_data);
     if (ret != BLE_ERR_NO_ERROR) {

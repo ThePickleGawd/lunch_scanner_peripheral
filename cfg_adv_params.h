@@ -18,7 +18,7 @@
 #define CFG_ADV0_CREATE_INTERVAL_MIN ((uint32_t)ADV0_INTERVAL*1000/625)
 #define CFG_ADV0_CREATE_INTERVAL_MAX ((uint32_t)ADV0_INTERVAL*1000/625)
 
-#define PAYLOAD_RSSI_CNT 4 // How many IDs in packet
+#define PAYLOAD_RSSI_CNT 3 // How many IDs in packet
 #define DEFAULT_PERIPH_MODE 0 // Extender or calibrator
 
 #define ADV_PERIPH_MODE_OFFSET 2
