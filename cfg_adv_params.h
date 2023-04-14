@@ -18,12 +18,30 @@
 #define CFG_ADV0_CREATE_INTERVAL_MIN ((uint32_t)ADV0_INTERVAL*1000/625)
 #define CFG_ADV0_CREATE_INTERVAL_MAX ((uint32_t)ADV0_INTERVAL*1000/625)
 
-#define PAYLOAD_RSSI_CNT 2
+#define PAYLOAD_RSSI_CNT 3 // How many IDs in packet
+#define DEFAULT_PERIPH_MODE 0 // Extender or calibrator
+
+#define ADV_PERIPH_MODE_OFFSET 2
+#define ADV_DATA_START_OFFSET 4
+
+/*
+What if a school does not have a common prefix?
+Then the prefix is blank. Duh
+
+So then the prefix should be in a map of school to prefix
+
+map {
+   "GUNN": 950
+   "PALY": 950
+   "LYNBROOK": IDK MAN
+}
+*/
 
 #define CFG_ADV0_DATA_ADV_PAYLOAD \
-   0x18, 0xFF, PAYLOAD_RSSI_CNT, \
-   -80, '0', '0', '0', '0', '0', '0', '0', '0', '0', 0, \
-   -80, '0', '0', '0', '0', '0', '0', '0', '0', '0', 0, \
+   0x18, 0xFF, DEFAULT_PERIPH_MODE, PAYLOAD_RSSI_CNT, \
+   -80, '0', '0', '0', '0', '0', 0, \
+   -80, '0', '0', '0', '0', '0', 0, \
+   -80, '0', '0', '0', '0', '0', 0, \
     
 #define CFG_ADV0_DATA_SCANRSP_PAYLOAD \
-    0x09,0xff,0x00,0x60,'A','T','M','B','L','E'
+    0x09,0xff,0x00,0x60,'L','U','N','C','H','P'

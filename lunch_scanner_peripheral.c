@@ -10,6 +10,7 @@
  ******************************************************************************
  */
 
+// Libs
 #include "arch.h"
 #include <inttypes.h>
 #include "atm_asm.h"
@@ -22,7 +23,9 @@
 #include "atm_scan.h"
 #include "atm_gap_param.h"
 #include "atm_scan_param.h"
+#include "atm_gpio.h"
 
+// My Stuff
 #include "lunch_scanner_peripheral.h"
 #include "lunch_parser.h"
 #include "cfg_adv_params.h"
@@ -30,8 +33,15 @@
 
 #define S_TBL_IDX 0
 
-#ifndef STUDENT_ID_LEN
-#define STUDENT_ID_LEN 10
+#define PERIPH_STUDENT_ID_LEN 6 // how much we want to store in the adv packet
+#define PERIPH_PREFIX_LEN 3
+
+#ifndef STUDENT_ID_ARR_LEN
+#define STUDENT_ID_ARR_LEN 10
+#endif
+
+#ifndef PERIPH_MODE_DIP
+#define PERIPH_MODE_DIP 9
 #endif
 
 ATM_LOG_LOCAL_SETTING("lunch_periph", V);
@@ -43,17 +53,18 @@ static sw_timer_id_t tid_restart;
 static pm_lock_id_t scan_lock_hiber;
 static uint8_t sleep_mode;
 
-static bool should_send = false;
+static bool should_send = false; // should we send out an adv?
+static lunch_peripheral_mode_t periph_mode;
 
 typedef struct {
     int totalRSSI;
     int8_t beacon_cnt;
-    uint8_t student_id[STUDENT_ID_LEN];
+    uint8_t student_id[STUDENT_ID_ARR_LEN];
 } __PACKED lunch_rssi_state_t;
 
 typedef struct {
     int8_t rssi_val;
-    uint8_t student_id[STUDENT_ID_LEN];
+    uint8_t student_id[PERIPH_STUDENT_ID_LEN];
 } __PACKED lunch_peripheral_data_t;
 
 
@@ -61,13 +72,10 @@ KHASH_MAP_INIT_INT(rssi, lunch_rssi_state_t)
 
 static khash_t(rssi) *rssi_map;
 
-
-#define ADV_LUNCH_DATA_IDX 3
-
 static int student_id_to_int(nvds_lunch_data_t data)
 {
     int num = 0;
-    for(int i = STUDENT_ID_LEN - 1; i >= 0; i--) {
+    for(int i = STUDENT_ID_ARR_LEN - 1; i >= 0; i--) {
         num += data.student_id[i] - '0';
         num *= 10;
     }
@@ -79,7 +87,7 @@ static int student_id_to_int(nvds_lunch_data_t data)
  * @brief Callback registered with the GAP layer
  * @note Called by the GAP layer to report advertisement data.
  */
-static void bsa_ext_adv_ind(ble_gap_ind_ext_adv_report_t const *ind)
+static void periph_ext_adv_ind(ble_gap_ind_ext_adv_report_t const *ind)
 {
     if (!(ind->info & BLE_GAP_REPORT_INFO_COMPLETE_BIT)) return; 
     
@@ -102,9 +110,9 @@ static void bsa_ext_adv_ind(ble_gap_ind_ext_adv_report_t const *ind)
             lunch_rssi_state_t rssi_state = {
                 .beacon_cnt = 1,
                 .totalRSSI = (int)ind->rssi,
-                .student_id = {'E', 'M', 'P', 'T', 'Y', '_', 'A', 'R', 'R', 0}
+                .student_id = {'E', 'M', 'P', 'T', 'Y', 0, 0, 0, 0, 0}
             };
-            memcpy(&rssi_state.student_id, &lunch_data.student_id, STUDENT_ID_LEN);
+            memcpy(&rssi_state.student_id, &lunch_data.student_id, STUDENT_ID_ARR_LEN);
             kh_value(rssi_map, iter) = rssi_state;
         } else {
             lunch_rssi_state_t *rssi_state = &kh_value(rssi_map, k);
@@ -119,7 +127,7 @@ static void bsa_ext_adv_ind(ble_gap_ind_ext_adv_report_t const *ind)
  * @brief Callback registered with the GAP layer.
  * @note Called after the GAP layer has initialized.
  */
-static void bsa_gap_init_cfm(ble_err_code_t status)
+static void periph_gap_init_cfm(ble_err_code_t status)
 {
    atm_asm_move(S_TBL_IDX, OP_GAP_INIT_CFM);
 }
@@ -128,12 +136,12 @@ static void bsa_gap_init_cfm(ble_err_code_t status)
  * @brief Trigger GAP initialization.
  * @note Called upon module initialization.
  */
-static void bsa_gap_init(void)
+static void periph_gap_init(void)
 {
     // Gap callbacks
     static atm_gap_cbs_t const gap_callbacks = {
-	.ext_adv_ind = bsa_ext_adv_ind,
-	.init_cfm = bsa_gap_init_cfm,
+	.ext_adv_ind = periph_ext_adv_ind,
+	.init_cfm = periph_gap_init_cfm,
     };
     atm_gap_start(atm_gap_param_get(), &gap_callbacks);
 }
@@ -142,7 +150,7 @@ static void bsa_gap_init(void)
  * @brief Callback registered with the ATM scan module.
  * @note Called when scan activity has started.
  */
-static void bsa_scan_start_cfm(uint8_t inst_idx, ble_err_code_t status)
+static void periph_scan_start_cfm(uint8_t inst_idx, ble_err_code_t status)
 {
     ASSERT_INFO(status == BLE_ERR_NO_ERROR, inst_idx, status);
     scan_act_idx = inst_idx;
@@ -154,7 +162,7 @@ static void bsa_scan_start_cfm(uint8_t inst_idx, ble_err_code_t status)
  * to send advertisement for acknowledgement or go hibernation.
  * @note Called when scan activity has stoped.
  */
-static void bsa_scan_stop_ind(uint8_t inst_idx, ble_err_code_t status)
+static void periph_scan_stop_ind(uint8_t inst_idx, ble_err_code_t status)
 {
     if (should_send) {
 	atm_asm_move(S_TBL_IDX, OP_SCAN_TIMEOUT_CREATE_ADV);
@@ -172,14 +180,14 @@ static void bsa_scan_stop_ind(uint8_t inst_idx, ble_err_code_t status)
  * transition to S_SCAN_STARTING.
  * @note Called after GAP has been initialized.
  */
-static void bsa_start_scan(void)
+static void periph_start_scan(void)
 {
     atm_scan_params_t start_params;
     atm_get_nvds_scan_params(&start_params);
     // Scan callbacks
     static atm_scan_cbs_t const scan_callbacks = {
-	.scan_start_cfm = bsa_scan_start_cfm,
-	.scan_stop_ind = bsa_scan_stop_ind,
+	.scan_start_cfm = periph_scan_start_cfm,
+	.scan_stop_ind = periph_scan_stop_ind,
     };
     atm_scan_err_t ret = atm_scan_create_and_start(BLE_OWN_STATIC_ADDR,
 	&start_params, &scan_callbacks);
@@ -192,7 +200,7 @@ static void bsa_start_scan(void)
  * @brief Scan on. Results in a state machine transition to S_SCAN_ON.
  * @note Called when the scan activity is turned-on.
  */
-static void bsa_scan_on(void)
+static void periph_scan_on(void)
 {
     ATM_LOG(D, "%s", __func__);
     atm_asm_set_state_op(S_TBL_IDX, S_SCAN_ON, OP_END);
@@ -206,7 +214,7 @@ static void bsa_scan_on(void)
  * S_SCAN_STARTING.
  * @note Called when the scan activity is turned-on.
  */
-static void bsa_restart_scan(void)
+static void periph_restart_scan(void)
 {
     atm_scan_params_t start_params;
     atm_get_nvds_scan_params(&start_params);
@@ -220,7 +228,7 @@ static void bsa_restart_scan(void)
  * @brief Callback registered with the atm_adv module
  * @note Called upon a state change in the advertising state machine
  */
-static void bsa_adv_state_change(atm_adv_state_t state, uint8_t act_idx,
+static void periph_adv_state_change(atm_adv_state_t state, uint8_t act_idx,
     ble_err_code_t status)
 {
     ATM_LOG(D, "ADV state change: %d", state);
@@ -262,9 +270,9 @@ static void bsa_adv_state_change(atm_adv_state_t state, uint8_t act_idx,
  * @note Called when the scan timeout and tries to send advertisement to peer
  * device.
  */
-static void bsa_create_adv(void)
+static void periph_create_adv(void)
 {
-    atm_adv_reg(bsa_adv_state_change);
+    atm_adv_reg(periph_adv_state_change);
     atm_adv_create_t __ATM_ADV_CREATE_PARAM_CONST *adv_create_ptr;
 	ATM_LOG(D, "%s: NVDS tag for create adv param not found. Using Default"
 	    , __func__);
@@ -280,10 +288,8 @@ static void bsa_create_adv(void)
  * S_ADV_DATA_SETTING.
  * @note Called when advertisement has created.
  */
-static void bsa_set_adv_data(void)
+static void periph_set_adv_data(void)
 {
-    static atm_adv_data_t *adv_data;
-
     if(kh_begin(rssi_map) == kh_end(rssi_map)) {
         ATM_LOG(E, "No data in map");
         return;
@@ -292,7 +298,6 @@ static void bsa_set_adv_data(void)
     // Find the n best rssi values
     // Go through array n times, each time finding the highest rssi that is less than the rssi max before it
     lunch_rssi_state_t best_rssi[PAYLOAD_RSSI_CNT] = {0};
-
     for(int i = 0; i < PAYLOAD_RSSI_CNT; i++) {
         int max_k = -1;
         for (int k = kh_begin(rssi_map); k != kh_end(rssi_map); ++k) {
@@ -314,9 +319,9 @@ static void bsa_set_adv_data(void)
             kh_del(rssi, rssi_map, max_k);
         } else {
             lunch_rssi_state_t empty_rssi = {
-                .totalRSSI = -80, // TODO: put known "failure" RSSI
+                .totalRSSI = 0xFF,
                 .beacon_cnt = 1,
-                .student_id = {'E', 'M', 'P', 'T', 'Y', '_', 'A', 'R', 'R', 0}
+                .student_id = {0, 0, 0, 'E', 'M', 'P', 'T', 'Y', 0, 0}
             };
 
             best_rssi[i] = empty_rssi;
@@ -329,10 +334,10 @@ static void bsa_set_adv_data(void)
         lunch_rssi_state_t *rssi_state = &best_rssi[i];
         lunch_peripheral_data_t student = {
             .rssi_val = rssi_state->totalRSSI / rssi_state->beacon_cnt,
-            .student_id = {'E', 'M', 'P', 'T', 'Y', '_', 'A', 'R', 'R', 0}
+            .student_id = {'E', 'M', 'P', 'T', 'Y', 0}
         };
         
-        memcpy(&student.student_id, &(rssi_state->student_id), STUDENT_ID_LEN);
+        memcpy(&student.student_id, &(rssi_state->student_id[PERIPH_PREFIX_LEN]), PERIPH_STUDENT_ID_LEN);
         lunch_periph_arr[i] = student;
     }
 
@@ -343,10 +348,39 @@ static void bsa_set_adv_data(void)
         }
     }
 
+    // Set adv data
+    static atm_adv_data_t *adv_data;
     adv_data = atm_adv_advdata_param_get(0);
-    memcpy((adv_data->data + ADV_LUNCH_DATA_IDX), (uint8_t *) &lunch_periph_arr, sizeof(lunch_periph_arr));
+    memset(adv_data->data + ADV_PERIPH_MODE_OFFSET, periph_mode, 1);
+    memcpy((adv_data->data + ADV_DATA_START_OFFSET), (uint8_t *) &lunch_periph_arr, sizeof(lunch_periph_arr));
 
-    ATM_LOG(D, "Output %s and %s", lunch_periph_arr[0].student_id, lunch_periph_arr[1].student_id);
+    ATM_LOG(D, "Size: %u", sizeof(lunch_periph_arr));
+
+    ATM_LOG(D, "%x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x %x", 
+        adv_data->data[0],
+        adv_data->data[1],
+        adv_data->data[2],
+        adv_data->data[3],
+        adv_data->data[4],
+        adv_data->data[5],
+        adv_data->data[6],
+        adv_data->data[7],
+        adv_data->data[8],
+        adv_data->data[9],
+        adv_data->data[10],
+        adv_data->data[11],
+        adv_data->data[12],
+        adv_data->data[13],
+        adv_data->data[14],
+        adv_data->data[15],
+        adv_data->data[16],
+        adv_data->data[17],
+        adv_data->data[18],
+        adv_data->data[19]
+    );
+
+    ATM_LOG(D, "Output %s and %s and %s and %s", lunch_periph_arr[0].student_id, lunch_periph_arr[1].student_id, 
+        lunch_periph_arr[2].student_id, lunch_periph_arr[3].student_id);
 
     ble_err_code_t ret = atm_adv_set_adv_data(adv_act_idx, adv_data);
     if (ret != BLE_ERR_NO_ERROR) {
@@ -361,7 +395,7 @@ static void bsa_set_adv_data(void)
  * S_ADV_STARTING.
  * @note Called when advertisement data has been set.
  */
-static void bsa_start_adv(void)
+static void periph_start_adv(void)
 {
     atm_adv_start_t __ATM_ADV_START_PARAM_CONST *adv_start_ptr;
 	ATM_LOG(D, "%s: NVDS tag for adv start param not found. Using Default",
@@ -378,7 +412,7 @@ static void bsa_start_adv(void)
  * S_ADV_STARTED.
  * @note Called when advertisement is turned-on.
  */
-static void bsa_adv_on(void)
+static void periph_adv_on(void)
 {
     ATM_LOG(D, "%s", __func__);
     atm_asm_set_state_op(S_TBL_IDX, S_ADV_STARTED, OP_END);
@@ -389,7 +423,7 @@ static void bsa_adv_on(void)
  * S_ADV_DELETING.
  * @note Called when advertisement timeout.
  */
-static void bsa_delete_adv(void)
+static void periph_delete_adv(void)
 {
     ble_err_code_t ret = atm_adv_delete(adv_act_idx);
     if (ret != BLE_ERR_NO_ERROR) {
@@ -402,18 +436,14 @@ static void bsa_delete_adv(void)
  * machine transition to S_IDLE.
  * @note Called when advertisement has been deleted.
  */
-static void bsa_unlock_hibernation(void)
+static void periph_unlock_hibernation(void)
 {
     ATM_LOG(D, "%s", __func__);
     if (restart_time_csec) {
-	atm_pm_unlock(scan_lock_hiber);
-	if (sleep_mode != SLEEP_ENABLE_HIBERNATE) {
-	    sw_timer_set(tid_restart, restart_time_csec);
-	}
-#ifdef CFG_WURX
-        wurx0_enabled = true;
-        wurx1_enabled = true;
-#endif
+        atm_pm_unlock(scan_lock_hiber);
+        if (sleep_mode != SLEEP_ENABLE_HIBERNATE) {
+            sw_timer_set(tid_restart, restart_time_csec);
+        }
     }
 }
 
@@ -421,7 +451,7 @@ static void bsa_unlock_hibernation(void)
  * @brief Restart timer callback.
  * @note Called when restart timer expired.
  */
-static void bsa_restart_timer(uint8_t idx, void const *ctx)
+static void periph_restart_timer(uint8_t idx, void const *ctx)
 {
     atm_asm_move(S_TBL_IDX, OP_SCAN_RESTART_SCAN);
 }
@@ -430,8 +460,18 @@ static void bsa_restart_timer(uint8_t idx, void const *ctx)
  * @brief Initialize the app data structures and start its state machine
  * @note Called after the platform drivers have initialized
  */
-static rep_vec_err_t bsa_init(void)
+static rep_vec_err_t periph_init(void)
 {
+    // Initialize DIP switch for periph mode
+    atm_gpio_setup(PERIPH_MODE_DIP);
+    atm_gpio_set_input(PERIPH_MODE_DIP);
+    atm_gpio_set_pullup(PERIPH_MODE_DIP);
+    periph_mode = (lunch_peripheral_mode_t) atm_gpio_read_gpio(PERIPH_MODE_DIP); // 0 = Extender, 1 = Calibrator
+    atm_gpio_clear_pullup(PERIPH_MODE_DIP);
+    atm_gpio_clear_input(PERIPH_MODE_DIP);
+
+    ATM_LOG(D, "Initing in %s mode", !periph_mode ? "extender " : "calibrator");
+
     // Read restart duration from NVDS
     nvds_tag_len_t restart_dur_size = sizeof(restart_time_csec);
     if (nvds_get(NVDS_TAG_APP_BLE_RSTRT_DUR, &restart_dur_size,
@@ -448,43 +488,23 @@ static rep_vec_err_t bsa_init(void)
     ATM_LOG(D, "BLE restart duration (ms): %" PRIu32, restart_time_csec * 10);
 
     if (restart_time_csec) {
-	tid_restart = sw_timer_alloc(bsa_restart_timer, NULL);
+	tid_restart = sw_timer_alloc(periph_restart_timer, NULL);
 	scan_lock_hiber = atm_pm_alloc(PM_LOCK_HIBERNATE);
 	atm_pm_set_hib_restart_time(restart_time_csec);
     }
-#ifdef CFG_WURX
-    if (!boot_was_cold()) {
-        // turn off wurx
-        wurx_disable();
-    }
-#endif
-    /**
-     * @brief BLE_scan_adv state machine step by step
-     *
-     * Step 1: Gap init
-     * Step 2: Create and start scan
-     * Step 3: Scan timeout
-     * Step 4: Check scan result
-     * 	(1) target not found -> go to step 8
-     * 	(2) target found     -> go to next step
-     * Step 5: Create and set adv data
-     * Step 6: Start adv
-     * Step 7: Adv timeout and delete adv
-     * Stop 8: Set restart timer and ready for hibernation
-     *
-     */
+
     static state_entry const s_tbl[] = {
-        {S_OP(S_INIT, OP_MODULE_INIT), S_GAP_INITIATING, bsa_gap_init},
-        {S_OP(S_GAP_INITIATING, OP_GAP_INIT_CFM), S_SCAN_STARTING, bsa_start_scan},
-        {S_OP(S_SCAN_STARTING, OP_START_SCAN_CFM), S_SCAN_ON, bsa_scan_on},
-        {S_OP(S_SCAN_ON, OP_SCAN_TIMEOUT_GO_HIB), S_IDLE, bsa_unlock_hibernation},
-        {S_OP(S_SCAN_ON, OP_SCAN_TIMEOUT_CREATE_ADV), S_ADV_CREATING, bsa_create_adv},
-        {S_OP(S_ADV_CREATING, OP_CREATE_ADV_CFM), S_ADV_DATA_SETTING, bsa_set_adv_data},
-        {S_OP(S_ADV_DATA_SETTING, OP_SET_ADV_DATA_CFM), S_ADV_STARTING, bsa_start_adv},
-        {S_OP(S_ADV_STARTING, OP_START_ADV_CFM), S_ADV_STARTED, bsa_adv_on},
-        {S_OP(S_ADV_STARTED, OP_ADV_TIMEOUT), S_ADV_DELETING, bsa_delete_adv},
-        {S_OP(S_ADV_DELETING, OP_DELETE_ADV_CFM), S_IDLE, bsa_unlock_hibernation},
-        {S_OP(S_IDLE, OP_SCAN_RESTART_SCAN), S_SCAN_STARTING, bsa_restart_scan},
+        {S_OP(S_INIT, OP_MODULE_INIT), S_GAP_INITIATING, periph_gap_init},
+        {S_OP(S_GAP_INITIATING, OP_GAP_INIT_CFM), S_SCAN_STARTING, periph_start_scan},
+        {S_OP(S_SCAN_STARTING, OP_START_SCAN_CFM), S_SCAN_ON, periph_scan_on},
+        {S_OP(S_SCAN_ON, OP_SCAN_TIMEOUT_GO_HIB), S_IDLE, periph_unlock_hibernation},
+        {S_OP(S_SCAN_ON, OP_SCAN_TIMEOUT_CREATE_ADV), S_ADV_CREATING, periph_create_adv},
+        {S_OP(S_ADV_CREATING, OP_CREATE_ADV_CFM), S_ADV_DATA_SETTING, periph_set_adv_data},
+        {S_OP(S_ADV_DATA_SETTING, OP_SET_ADV_DATA_CFM), S_ADV_STARTING, periph_start_adv},
+        {S_OP(S_ADV_STARTING, OP_START_ADV_CFM), S_ADV_STARTED, periph_adv_on},
+        {S_OP(S_ADV_STARTED, OP_ADV_TIMEOUT), S_ADV_DELETING, periph_delete_adv},
+        {S_OP(S_ADV_DELETING, OP_DELETE_ADV_CFM), S_IDLE, periph_unlock_hibernation},
+        {S_OP(S_IDLE, OP_SCAN_RESTART_SCAN), S_SCAN_STARTING, periph_restart_scan},
     };
 
     atm_asm_init_table(S_TBL_IDX, s_tbl, ARRAY_LEN(s_tbl));
@@ -502,7 +522,7 @@ static rep_vec_err_t bsa_init(void)
 int main(void)
 {
     rssi_map = kh_init(rssi);
-    RV_APPM_INIT_ADD_LAST(bsa_init);
+    RV_APPM_INIT_ADD_LAST(periph_init);
 
     DEBUG_TRACE("user_main() done");
     return 0;
