@@ -26,6 +26,7 @@
 #include "atm_gpio.h"
 
 // My Stuff
+#include "lunch.h"
 #include "lunch_scanner_peripheral.h"
 #include "lunch_parser.h"
 #include "cfg_adv_params.h"
@@ -35,10 +36,6 @@
 
 #define PERIPH_STUDENT_ID_LEN 6 // how much we want to store in the adv packet
 #define PERIPH_PREFIX_LEN 3
-
-#ifndef STUDENT_ID_ARR_LEN
-#define STUDENT_ID_ARR_LEN 10
-#endif
 
 #ifndef PERIPH_MODE_DIP
 #define PERIPH_MODE_DIP 9
@@ -308,7 +305,11 @@ static void periph_set_adv_data(void)
                 int currentRSSI = cur_rssi_state->totalRSSI / cur_rssi_state->beacon_cnt;
                 int curMaxRSSI = curMax_rssi_state->totalRSSI / curMax_rssi_state->beacon_cnt;
 
-                if(currentRSSI >= curMaxRSSI) {
+                // Don't send beacon if it is going to be ignored
+                if(currentRSSI >= curMaxRSSI && 
+                    (currentRSSI < RSSI_THRESHOLD_DEFAULT_MAX && periph_mode == CALIBRATOR) && 
+                    (currentRSSI > RSSI_THRESHOLD_DEFAULT_MIN))
+                {
                     max_k = k;
                 }
             }

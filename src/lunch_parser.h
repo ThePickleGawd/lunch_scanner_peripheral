@@ -12,13 +12,7 @@
 
 #pragma once
 
-#define SCHOOL_ID_LEN 6
-#define STUDENT_ID_LEN 10
-
-typedef struct {
-    uint8_t school_id[SCHOOL_ID_LEN];
-    uint8_t student_id[STUDENT_ID_LEN];
-} __PACKED nvds_lunch_data_t;
+#include "lunch.h"
 
 /**
  * @brief Try to parse lunch data from advertisement data
@@ -27,8 +21,7 @@ typedef struct {
 bool try_parse_lunch_data(uint8_t const data[], uint8_t len, nvds_lunch_data_t* out);
 
 /**
- * @brief Checks first 3 bytes against vendor id
- * @returns true on success, false otherwise
+ * @brief Prints out formatted bluetooth address
 */
-bool matches_bd_vendor(const uint8_t addr[]);
+void print_bd_addr(const uint8_t addr[]);
 

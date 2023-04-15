@@ -31,8 +31,6 @@ ATM_LOG_LOCAL_SETTING("lunch_parser", D);
 #define COMPLETE_SERVICE_LIST 0x03
 #define SERVICE_DATA 0x2a
 
-static uint8_t vendor_id[3] = {0x7c, 0x69, 0x6b};
-
 /*
  * STATIC FUNCTIONS
  *******************************************************************************
@@ -75,8 +73,8 @@ bool try_parse_lunch_data(uint8_t const data[], uint8_t len, nvds_lunch_data_t* 
             memcpy(buffer, &data[idx + DATA_OFFSET], cur_len - TYPE_OFFSET);
 
             if(buffer[0] == 0xf5 && buffer[1] == 0x2a) {
-                memcpy(out->school_id, &buffer[2], SCHOOL_ID_LEN);
-                memcpy(out->student_id, &buffer[2 + SCHOOL_ID_LEN], STUDENT_ID_LEN);
+                memcpy(out->school_id, &buffer[2], SCHOOL_ID_ARR_LEN);
+                memcpy(out->student_id, &buffer[2 + SCHOOL_ID_ARR_LEN], STUDENT_ID_ARR_LEN);
 
                 ATM_LOG(V, "Reading School ID: %s", out->school_id);
                 ATM_LOG(V, "Reading Student ID: %s", out->student_id);
@@ -90,7 +88,7 @@ bool try_parse_lunch_data(uint8_t const data[], uint8_t len, nvds_lunch_data_t* 
     return true;
 }
 
-bool matches_bd_vendor(const uint8_t addr[]) {
-    // ADDR is in LSB order
-    return addr[5] == vendor_id[0] && addr[4] == vendor_id[1] && addr[3] == vendor_id[2];
+void print_bd_addr(const uint8_t addr[]) {
+    ATM_LOG(V, "%x:%x:%x:%x:%x:%x", addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
 }
+
