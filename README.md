@@ -36,3 +36,8 @@ stateDiagram
 
 - Extender and calibrator mode + testing for accuracy improvements
 - Document adv packet 
+
+
+Calibrator
+Listen and store max rssi for all devices
+And the adv step, select top 3 who exceed their current high

@@ -2,7 +2,7 @@ include ../../user/common.mk
 
 DEBUG := 1
 
-DRIVERS := atm_ble interrupt sw_timer timer atm_pm atm_gpio
+DRIVERS := atm_ble interrupt sw_timer timer atm_pm atm_gpio lunch
 LIBRARIES := prf
 
 FRAMEWORK_MODULES := \
