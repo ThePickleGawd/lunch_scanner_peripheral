@@ -67,7 +67,7 @@ typedef struct {
 
 KHASH_MAP_INIT_INT(rssi, lunch_rssi_state_t)
 
-static khash_t(rssi) *rssi_map;
+static khash_t(rssi) *rssi_map; // the original one (resets every adv, tracks new data)
 
 static int student_id_to_int(nvds_lunch_data_t data)
 {
@@ -307,8 +307,8 @@ static void periph_set_adv_data(void)
 
                 // Don't send beacon if it is going to be ignored
                 if(currentRSSI >= curMaxRSSI && 
-                    (currentRSSI < RSSI_THRESHOLD_DEFAULT_MAX && periph_mode == CALIBRATOR) && 
-                    (currentRSSI > RSSI_THRESHOLD_DEFAULT_MIN))
+                    (currentRSSI < RSSI_THRESHOLD_MAX || periph_mode == EXTENDER) && 
+                    (currentRSSI > RSSI_THRESHOLD_MIN))
                 {
                     max_k = k;
                 }
